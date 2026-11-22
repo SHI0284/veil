@@ -17,7 +17,7 @@
 
 Python 3.9 이상이 필요합니다. 현재 검증 환경은 Windows / Python 3.9.6 / Flask 3.1.0입니다. 프런트엔드는 HTML·CSS·JavaScript이며 Node.js는 앱 실행에 필요하지 않습니다.
 
-비공개 저장소이므로 먼저 저장소 접근 권한이 있는 GitHub 계정으로 인증해야 합니다.
+공개 저장소이므로 누구나 코드를 열람하거나 clone할 수 있습니다. 팀원이 직접 push하려면 저장소 협업자 권한이 필요합니다.
 
 ```powershell
 git clone https://github.com/SHI0284/veil.git

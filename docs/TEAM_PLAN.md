@@ -17,7 +17,7 @@
 
 ## 충돌 없이 같이 개발하는 방법
 
-1. 저장소는 `veil/` 폴더 자체를 루트로 사용합니다. 설치·브랜치·PR 절차는 [협업 방법](../CONTRIBUTING.md)을 따릅니다. 팀원은 비공개 저장소 초대를 수락한 뒤 clone합니다.
+1. 저장소는 `veil/` 폴더 자체를 루트로 사용합니다. 설치·브랜치·PR 절차는 [협업 방법](../CONTRIBUTING.md)을 따릅니다. 공개 저장소라 바로 clone할 수 있으며, 직접 push할 팀원은 협업자 초대를 수락합니다.
 2. 브랜치는 `feature/agent-ui`, `feature/local-analysis`, `feature/ai-gateway`, `feature/security-server`로 나눕니다.
 3. 관리자 HTML은 이미 `templates/admin.html`로 분리했습니다. A는 `static/app.js`를 연구자/관리자 스크립트로 분리해 D에게 넘깁니다. 공용 CSS와 `web.py`는 동시에 덮어쓰지 않도록 PR에서 조정합니다.
 4. `domain.py`와 `controller.py`의 함수 인자·반환형을 바꿀 때는 영향을 받는 담당자와 먼저 합의합니다. A가 통합 변경을 반영합니다.
