@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ session.get('csrf', '') }}">
+<title>{% block title %}VEIL · 연구를 위한 안전한 AI 사용{% endblock %}</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='veil-logo-transparent.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='brand.css') }}">
+<script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body data-page="{% block page %}{% endblock %}">
+<a class="skip-link" href="#main">본문으로 이동</a>
+{% block content %}{% endblock %}
+<div id="toast" class="toast" role="status" hidden></div>
+</body></html>

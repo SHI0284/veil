@@ -1,0 +1,28 @@
+{% extends "base.html" %}{% block page %}workspace{% endblock %}
+{% block content %}
+<header class="studio-header">
+  <a href="/workspace" class="studio-brand" aria-label="VEIL 작업 공간"><img class="brand-logo" src="/static/veil-logo-transparent.png" alt="VEIL" width="2170" height="725"></a>
+  <span class="studio-name">연구자의 개인 작업실</span>
+  <span id="top-status" class="studio-status">VEIL 보호 중</span>
+  <button class="text-button" id="new-chat">새 노트 <span aria-hidden="true">＋</span></button>
+  <div class="studio-account"><span id="account-id">researcher</span><button class="text-button logout">로그아웃</button></div>
+</header>
+<div class="workspace-layout studio-layout">
+  <main id="main" class="chat-main">
+    <header class="chat-heading"><div><span class="folio-label">RESEARCH NOTE</span><h1>나의 연구 노트</h1></div><p id="ai-chat-label">현재 대화 · OpenAI</p></header>
+    <div id="messages" class="messages" aria-live="polite">
+      <div class="welcome">
+        <div class="welcome-copy"><div class="veil-stroke" aria-hidden="true"></div><h2>질문을 펼치고,<br>정보는 가려두고.</h2><p>아직 다듬지 않은 생각도 괜찮아요.<br>보내기 전, 함께 확인할게요.</p></div>
+        <div class="welcome-suggestions"><span class="folio-label">어디서 시작할까요?</span><button data-example="safe"><span>01 / 읽고 정리하기</span>공개 논문의 연구 방법 요약 <b aria-hidden="true">↗</b></button><button data-example="caution"><span>02 / 보호하며 쓰기</span>개인정보가 담긴 연구 계획 <b aria-hidden="true">↗</b></button><button data-example="blocked"><span>03 / 경계 확인하기</span>고민감 정보 검사 <b aria-hidden="true">↗</b></button></div>
+      </div>
+    </div>
+    <div class="composer-wrap"><div class="composer"><label for="prompt-input"><span class="folio-label">YOUR DRAFT</span> 지금 떠오르는 질문</label><textarea id="prompt-input" rows="3" placeholder="아이디어, 질문, 검토할 문장을 이곳에 적어 주세요."></textarea><div class="composer-footer"><span>입력은 검사 전까지 이 PC에 머물러요.</span><span id="char-count">0자</span></div></div><div class="under-composer"><span>검사와 가명 복원은 내 PC에서 · 승인된 입력만 OpenAI로</span><span>Ctrl + Enter로 검사</span></div></div>
+  </main>
+  <aside class="protection-panel" aria-label="VEIL 검사 데스크">
+    <header class="panel-header"><div><span class="folio-label">PRIVACY DESK</span><h2>전송 전,<br>마지막 확인.</h2></div><span class="tag green" id="status-tag">보호 중</span></header>
+    <div id="panel-content" aria-live="polite"></div>
+    <footer class="panel-footer"><span id="policy-label">빠른 모드</span><span id="ai-status">OpenAI · 키 등록 필요</span><span>VEIL / PRIVATE BY DESIGN</span></footer>
+  </aside>
+  <details class="demo-settings" hidden><summary>시연 설정</summary><label for="scenario">모의 AI 응답</label><select id="scenario"><option value="SUCCESS">정상 응답</option><option value="TIMEOUT">시간 초과</option><option value="ERROR">연결 오류</option></select></details>
+</div>
+{% endblock %}
