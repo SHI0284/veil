@@ -10,6 +10,9 @@ from datetime import datetime, timedelta, timezone
 from .domain import SecurityPolicy
 
 
+LOG_REVIEW_STATUSES = ("PENDING", "REVIEWED", "FOLLOW_UP")
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -18,6 +21,7 @@ class LocalRepository:
     def __init__(self, path, check_same_thread=True):
         self.db = sqlite3.connect(str(path), check_same_thread=check_same_thread)
         self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript('''
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY, role TEXT NOT NULL, salt TEXT NOT NULL,
@@ -29,6 +33,14 @@ class LocalRepository:
                 prompt_id TEXT NOT NULL, risk_level TEXT, action TEXT NOT NULL,
                 policy_version INTEGER NOT NULL, counts TEXT NOT NULL, log_level TEXT NOT NULL,
                 summary TEXT NOT NULL, reason_provided INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS security_log_review (
+                log_id INTEGER NOT NULL REFERENCES security_log(id) ON DELETE CASCADE,
+                revision INTEGER NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('PENDING', 'REVIEWED', 'FOLLOW_UP')),
+                reviewer_id TEXT NOT NULL REFERENCES users(id),
+                reviewed_at TEXT NOT NULL,
+                PRIMARY KEY (log_id, revision));
+            CREATE INDEX IF NOT EXISTS security_log_created_at ON security_log(created_at);
         ''')
         for user, role in (("researcher", "RESEARCHER"), ("manager", "MANAGER")):
             if self.db.execute("SELECT 1 FROM users WHERE id=?", (user,)).fetchone():
@@ -59,18 +71,26 @@ class LocalRepository:
         return {"id": user, "role": row["role"]}
 
     def get_policy(self):
-        data = json.loads(self.db.execute("SELECT data FROM policy WHERE id=1").fetchone()[0])
+        return self._decode_policy(self.db.execute("SELECT data FROM policy WHERE id=1").fetchone()[0])
+
+    @staticmethod
+    def _decode_policy(raw):
+        data = json.loads(raw)
         for key in ("keywords", "core_keywords"):
             data[key] = tuple(data[key])
         return SecurityPolicy(**data)
 
     def save_policy(self, policy):
         policy.validate()
-        if policy.version != self.get_policy().version + 1:
+        raw = self.db.execute("SELECT data FROM policy WHERE id=1").fetchone()[0]
+        if policy.version != self._decode_policy(raw).version + 1:
             raise ValueError("정책 버전이 변경되었습니다. 다시 열어 수정하세요.")
-        self.db.execute("UPDATE policy SET data=? WHERE id=1", (json.dumps(asdict(policy), ensure_ascii=False),))
-        self.db.commit()
-        self.purge()
+        with self.db:
+            updated = self.db.execute("UPDATE policy SET data=? WHERE id=1 AND data=?",
+                                      (json.dumps(asdict(policy), ensure_ascii=False), raw))
+            if updated.rowcount != 1:
+                raise ValueError("정책 버전이 변경되었습니다. 다시 열어 수정하세요.")
+            self._delete_expired(policy)
 
     def add_log(self, user, prompt, action, policy, reason=""):
         counts = Counter(i.kind for i in prompt.result.items) if prompt.result else {}
@@ -85,27 +105,50 @@ class LocalRepository:
 
     def logs(self, level="ALL", user="", start="", end=""):
         self.purge()
-        sql, params = "SELECT * FROM security_log WHERE 1=1", []
+        sql = """SELECT l.*, COALESCE(r.status, 'PENDING') AS review_status,
+                        COALESCE(r.revision, 0) AS review_revision,
+                        r.reviewer_id, r.reviewed_at
+                 FROM security_log AS l
+                 LEFT JOIN security_log_review AS r ON r.log_id = l.id
+                    AND r.revision = (SELECT MAX(revision) FROM security_log_review WHERE log_id = l.id)
+                 WHERE 1=1"""
+        params = []
         if level != "ALL":
-            sql += " AND risk_level=?"
+            sql += " AND l.risk_level=?"
             params.append(level)
         if user:
-            sql += " AND user_id=?"
+            sql += " AND l.user_id=?"
             params.append(user)
         if start:
-            sql += " AND created_at>=?"
+            sql += " AND l.created_at>=?"
             params.append(start)
         if end:
-            sql += " AND created_at<?"
+            sql += " AND l.created_at<?"
             params.append(end)
-        return [dict(r) for r in self.db.execute(sql + " ORDER BY id DESC", params)]
+        return [dict(r) for r in self.db.execute(sql + " ORDER BY l.id DESC", params)]
+
+    def review_log(self, log_id, created_at, revision, status, reviewer):
+        if status not in LOG_REVIEW_STATUSES:
+            raise ValueError("지원하지 않는 검토 상태입니다.")
+        self.purge()
+        with self.db:
+            saved = self.db.execute("""
+                INSERT INTO security_log_review(log_id, revision, status, reviewer_id, reviewed_at)
+                SELECT id, ?, ?, ?, ? FROM security_log
+                WHERE id = ? AND created_at = ?
+                    AND ? = COALESCE((SELECT MAX(revision) FROM security_log_review WHERE log_id = ?), 0)
+            """, (revision + 1, status, reviewer, now(), log_id, created_at, revision, log_id))
+            if saved.rowcount != 1:
+                raise ValueError("기록이 변경되었거나 보관 기간이 지났습니다. 다시 조회하세요.")
 
     def purge(self):
-        policy = self.get_policy()
+        with self.db:
+            self._delete_expired(self.get_policy())
+
+    def _delete_expired(self, policy):
         if policy.auto_delete:
             cutoff = (datetime.now(timezone.utc) - timedelta(days=policy.retention_days)).isoformat()
             self.db.execute("DELETE FROM security_log WHERE created_at < ?", (cutoff,))
-            self.db.commit()
 
     def close(self):
         self.db.close()

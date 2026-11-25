@@ -166,6 +166,16 @@ class WorkflowTests(unittest.TestCase):
         self.repo.save_policy(replace(self.repo.get_policy(), version=3, auto_delete=True))
         self.assertEqual(self.repo.logs(), [])
 
+    def test_existing_policy_loads_with_masking_option_disabled(self):
+        with self.repo.db:
+            raw = self.repo.db.execute("SELECT data FROM policy WHERE id=1").fetchone()[0]
+            old_policy = json.loads(raw)
+            del old_policy["require_pii_masking"]
+            self.repo.db.execute("UPDATE policy SET data=? WHERE id=1", (json.dumps(old_policy),))
+        self.assertFalse(self.repo.get_policy().require_pii_masking)
+        self.assertEqual(self.agent.analyze("010-1234-5678").level, "CAUTION")
+        self.agent.send("010-1234-5678", "공개 동의 확인 완료")
+
     def test_failed_analysis_is_not_sendable(self):
         def fail(*args):
             raise TimeoutError("분석 실패")

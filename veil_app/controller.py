@@ -95,6 +95,10 @@ class PCAgent:
         current = self.repository.get_policy()
         self.repository.save_policy(replace(current, version=current.version + 1, **changes))
 
+    def review_log(self, log_id, created_at, revision, status):
+        self.require_user("MANAGER")
+        self.repository.review_log(log_id, created_at, revision, status, self.user["id"])
+
     def logs(self, **filters):
         self.require_user("MANAGER")
         return self.repository.logs(**filters)

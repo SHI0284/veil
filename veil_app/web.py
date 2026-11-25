@@ -85,6 +85,7 @@ def create_app(database=None, testing=False):
 
     def payload(s):
         agent, p = s["agent"], s["agent"].current
+        policy = repo.get_policy()
         prompt = None
         if p:
             r = p.result
@@ -92,10 +93,11 @@ def create_app(database=None, testing=False):
                 "status": p.status, "converted": p.converted,
                 "result": {"id": r.result_id, "level": r.level, "score": r.score,
                     "policy_version": r.policy_version,
+                    "masking_required": policy.require_pii_masking and r.has_current_pii,
                     "counts": dict(Counter(i.kind for i in r.items)),
                     "history": any(i.from_history for i in r.items),
                     "core": any(i.category == "CORE_SECRET" for i in r.items)} if r else None}
-        return {"user": agent.user, "policy": asdict(repo.get_policy()), "prompt": prompt,
+        return {"user": agent.user, "policy": asdict(policy), "prompt": prompt,
                 "messages": s["messages"], "scenario": getattr(agent.gateway.client, "scenario", None),
                 "ai": ({"provider": "모의 AI", "model": "stub", "configured": True, "is_demo": True} if testing else ai_settings.public()),
                 "history_count": min(4, len(agent.conversation.prompts))}
@@ -251,10 +253,11 @@ def create_app(database=None, testing=False):
     @app.post("/api/policy")
     def policy():
         s, data = state("MANAGER"), request.get_json()
-        if data.get("version") != repo.get_policy().version:
+        if type(data.get("version")) is not int or data["version"] != repo.get_policy().version:
             raise ValueError("정책이 변경되었습니다. 새로고침 후 다시 저장하세요.")
         changes = {k: v for k, v in data.items() if k != "version"}
-        allowed = {"keywords", "core_keywords", "caution", "block", "mode", "log_level", "retention_days", "auto_delete"}
+        allowed = {"keywords", "core_keywords", "caution", "block", "mode", "require_pii_masking",
+                   "log_level", "retention_days", "auto_delete"}
         if not changes or not changes.keys() <= allowed:
             raise ValueError("지원하지 않는 정책 항목입니다.")
         for key in ("keywords", "core_keywords"):
@@ -265,10 +268,17 @@ def create_app(database=None, testing=False):
         for key in ("caution", "block"):
             if key in changes and type(changes[key]) not in (int, float):
                 raise ValueError("임계값은 숫자로 입력하세요.")
-        if "auto_delete" in changes and type(changes["auto_delete"]) is not bool:
-            raise ValueError("자동 삭제 설정을 확인하세요.")
         s["agent"].save_policy(**changes)
         return jsonify(payload(s))
+
+    @app.post("/api/logs/<int:log_id>/review")
+    def review_log(log_id):
+        s, data = state("MANAGER"), request.get_json()
+        revision = data.get("revision")
+        if type(revision) is not int or not 0 <= revision < 2**63 - 1 or not 0 < log_id < 2**63:
+            raise ValueError("기록 정보를 확인하고 다시 조회하세요.")
+        s["agent"].review_log(log_id, string(data, "created_at"), revision, string(data, "status"))
+        return jsonify(ok=True)
 
     @app.get("/api/logs")
     def logs():

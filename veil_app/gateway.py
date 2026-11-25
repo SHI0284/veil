@@ -31,6 +31,8 @@ class TransmissionGuard:
             raise ValueError("전송 불가: 최신 검사를 통과한 프롬프트만 보낼 수 있습니다.")
         if prompt.result.level == "BLOCKED":
             raise ValueError("고위험 프롬프트는 전송할 수 없습니다.")
+        if policy.require_pii_masking and prompt.result.has_current_pii:
+            raise ValueError("개인정보를 변환하거나 제거한 뒤 다시 검사하세요.")
         if prompt.result.level == "CAUTION" and not 5 <= len(reason.strip()) <= 200:
             raise ValueError("주의 확인 후 전송하려면 사유를 5~200자로 입력하세요.")
         # Real requests are never automatically retried: a lost response may still be billed.

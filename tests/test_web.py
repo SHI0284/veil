@@ -1,6 +1,7 @@
 """Flask 어댑터 회귀 테스트. 네트워크/브라우저 없이 독립 메모리 DB 사용."""
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from veil_app.web import create_app
@@ -138,6 +139,53 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("010-",str(logs))
         self.assertEqual(self.client.get("/api/logs?start=2026-12-01&end=2026-01-01").status_code,400)
         self.assertEqual(self.client.get("/api/logs?level=INVALID").status_code,400)
+
+    def test_manager_can_require_masking_even_below_warning_threshold(self):
+        self.login("manager")
+        changed = self.post("policy", {"version": 1, "caution": 0.8, "block": 0.9,
+                                       "require_pii_masking": True})
+        self.assertTrue(changed.json["policy"]["require_pii_masking"])
+        self.login()
+        text = "성명： 홍길동, +82 10 1234 5678, user@example.com, 9001011234567"
+        current = self.analyze(text)
+        snapshot = self.client.get("/api/session").json["prompt"]
+        self.assertEqual(snapshot["status"], "CAUTION")
+        self.assertTrue(snapshot["result"]["masking_required"])
+        self.assertEqual(self.post("send", {**current, "reason": "동의 여부 확인 완료"}).status_code, 400)
+        preview = self.post("preview", current).json
+        self.assertEqual(preview["after"], "성명： [보호정보], [보호정보], [보호정보], [보호정보]")
+        approved = self.post("approve", {**current, "token": preview["token"]}).json["prompt"]
+        self.assertEqual(approved["status"], "SAFE")
+        self.assertEqual(self.post("send", {"prompt_id": approved["id"],
+            "result_id": approved["result"]["id"], "content": approved["content"]}).status_code, 200)
+
+    def test_log_review_preserves_event_and_expires_with_it(self):
+        self.login()
+        self.assertEqual(self.post("send", self.analyze("공개 자료")).status_code, 200)
+        self.assertEqual(self.post("logs/1/review", {}).status_code, 403)
+        self.login("manager")
+        original = self.client.get("/api/logs").json["logs"][0]
+        self.assertEqual(original["review_status"], "PENDING")
+        endpoint = "logs/{}/review".format(original["id"])
+        review = {"created_at": original["created_at"], "revision": 0, "status": "FOLLOW_UP"}
+        self.assertEqual(self.post(endpoint, {**review, "status": "INVALID"}).status_code, 400)
+        self.assertEqual(self.post(endpoint, review).status_code, 200)
+        self.assertEqual(self.post(endpoint, review).status_code, 400)
+        self.assertEqual(self.post(endpoint, {**review, "revision": 1, "status": "REVIEWED"}).status_code, 200)
+        current = self.client.get("/api/logs").json["logs"][0]
+        self.assertEqual(current["action"], original["action"])
+        self.assertEqual(current["review_status"], "REVIEWED")
+        self.assertEqual(current["reviewer_id"], "manager")
+        self.assertEqual(current["review_revision"], 2)
+        db = self.app.extensions["veil_repository"].db
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM security_log_review").fetchone()[0], 2)
+        old = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        with db:
+            db.execute("UPDATE security_log SET created_at=?", (old,))
+        saved = self.post("policy", {"version": 1, "retention_days": 1, "auto_delete": True})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(self.client.get("/api/logs").json["logs"], [])
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM security_log_review").fetchone()[0], 0)
 
     def test_request_shape_errors_and_session_expiry(self):
         self.login()

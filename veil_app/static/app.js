@@ -12,6 +12,7 @@ const examples = {
   blocked: '보안과제의 핵심기술 개발 일정을 요약해줘.'
 };
 const kinds = {PERSON:'이름',PHONE:'연락처',EMAIL:'이메일',KEYWORD:'연구 정보',IDENTIFIER:'식별번호'};
+const reviewStatuses = {PENDING:'미검토',REVIEWED:'검토 완료',FOLLOW_UP:'후속 조치 필요'};
 const riskNames = {SAFE:'안전',CAUTION:'주의',BLOCKED:'차단'};
 const actions = {SENT:'안전 전송',CONVERTED_SENT:'변환 후 전송',SENT_WITH_WARNING:'경고 후 전송',CANCELLED:'취소',REJECTED:'전송 거부'};
 
@@ -119,11 +120,12 @@ function renderPanel() {
     html = intro('01 위험 확인', blocked ? '고민감 정보의 전송을 차단했어요' : '주의 · 보안 경고를 확인해요', blocked ? '위험 정보를 변환하거나 수정한 뒤 다시 검사해 주세요.' : '개인정보와 비공개 연구 정보가 포함되어 있어요.');
     html += '<div class="panel-stack">';
     if (r.history) html += callout('이전 대화에서도 위험 정보를 찾았어요', '현재 입력을 변환해도 이전 대화의 위험이 남을 수 있어요.','amber');
+    if (r.masking_required) html += callout('개인정보 변환이 필요한 입력이에요', '개인정보를 변환하거나 입력에서 제거한 뒤 다시 검사해 주세요.', 'amber');
     if (r.core) html += callout('고민감 정보 · 전송 차단', '연구실의 핵심 키워드에 해당하는 정보가 있어요. 그대로 전송할 수 없습니다.','red');
     const count = Object.values(r.counts).reduce((a,b)=>a+b,0);
     const summary = Object.entries(r.counts).map(([k,n])=>escapeHTML(kinds[k] || k)+' '+n+'건').join(' · ');
     html += card('확인된 정보 ' + count + '개', summary, '탐지 내용을 비교하려면 변환 미리보기를 열어 주세요.') + '</div>';
-    html += '<div class="panel-actions">' + button('변환 미리보기','preview',true) + (!blocked ? button('주의 확인 후 전송','reason') : '') + button('요청 취소','cancel') + '</div>';
+    html += '<div class="panel-actions">' + button('변환 미리보기','preview',true) + (!blocked && !r.masking_required ? button('주의 확인 후 전송','reason') : '') + button('요청 취소','cancel') + '</div>';
     html += '<p class="result-meta">위험 점수 ' + r.score.toFixed(2) + ' · 프롬프트 v' + p.revision + '</p>';
   } else if (stage === 'SEND_UNKNOWN') {
     setBadge('응답 미확인', 'amber');
@@ -233,6 +235,7 @@ function fillPolicy(p) {
   $('caution-threshold').value=p.caution; $('block-threshold').value=p.block;
   document.querySelectorAll('input[name="mode"]').forEach(el=>el.checked=el.value===p.mode);
   document.querySelectorAll('input[name="log-level"]').forEach(el=>el.checked=el.value===p.log_level);
+  $('require-pii-masking').checked=p.require_pii_masking;
   $('retention-days').value=p.retention_days; $('auto-delete').checked=p.auto_delete;
 }
 function switchAdmin(view) {
@@ -241,12 +244,31 @@ function switchAdmin(view) {
   document.querySelectorAll('.admin-sidebar [data-view]').forEach(el=>{el.classList.toggle('active',el.dataset.view===view);el.setAttribute('aria-current',el.dataset.view===view?'page':'false');});
   if(view==='logs') return searchLogs();
 }
+function logTime(value) {
+  return new Date(value).toLocaleString('ko-KR', {
+    timeZone:'Asia/Seoul', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false
+  });
+}
 async function searchLogs() {
   const q=new URLSearchParams({start:$('log-start').value,end:$('log-end').value,user:$('log-user').value.trim(),level:$('log-level').value});
   const {logs}=await api('logs?'+q);
   $('log-count').textContent='검색 결과 '+logs.length+'건';
   $('logs-empty').hidden=logs.length!==0;
-  $('log-rows').innerHTML=logs.map(r=>'<tr><td>'+escapeHTML(new Date(r.created_at).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}))+'</td><td>'+escapeHTML(r.user_id)+'</td><td><span class="tag '+({SAFE:'green',CAUTION:'amber',BLOCKED:'red'}[r.risk_level]||'')+'">'+escapeHTML(riskNames[r.risk_level]||'미검사')+'</span></td><td>'+escapeHTML(actions[r.action]||r.action)+'</td><td>'+escapeHTML(labels(r.counts))+'</td></tr>').join('');
+  $('log-rows').innerHTML = logs.map(log => {
+    const riskColor = {SAFE:'green',CAUTION:'amber',BLOCKED:'red'}[log.risk_level] || '';
+    const options = Object.entries(reviewStatuses).map(([value, label]) =>
+      '<option value="' + value + '"' + (value === log.review_status ? ' selected' : '') + '>' + label + '</option>').join('');
+    const lastReview = log.reviewed_at
+      ? '<div class="small muted">' + escapeHTML(log.reviewer_id) + ' · ' + escapeHTML(logTime(log.reviewed_at)) + '</div>'
+      : '';
+    return '<tr><td>' + escapeHTML(logTime(log.created_at)) + '</td><td>' + escapeHTML(log.user_id) +
+      '</td><td><span class="tag ' + riskColor + '">' + escapeHTML(riskNames[log.risk_level] || '미검사') +
+      '</span></td><td>' + escapeHTML(actions[log.action] || log.action) + '</td><td>' + escapeHTML(labels(log.counts)) +
+      '</td><td><form class="log-review" data-id="' + escapeHTML(log.id) + '" data-created-at="' +
+      escapeHTML(log.created_at) + '" data-revision="' + escapeHTML(log.review_revision) + '">' +
+      '<select aria-label="기록 ' + escapeHTML(log.id) + ' 검토 상태">' + options +
+      '</select> <button class="text-button" type="submit">저장</button></form>' + lastReview + '</td></tr>';
+  }).join('');
 }
 async function initAdmin() {
   state=await api('session'); if(!state.user){location.assign('/login');return;}
@@ -266,12 +288,25 @@ async function initAdmin() {
   await refresh();
   $('refresh-dashboard').addEventListener('click',()=>run(refresh));
   $('log-filter').addEventListener('submit',e=>{e.preventDefault();run(searchLogs);});
+  $('log-rows').addEventListener('submit', event => {
+    const form = event.target.closest('.log-review');
+    if (!form) return;
+    event.preventDefault();
+    run(async () => {
+      await api('logs/' + form.dataset.id + '/review', {
+        created_at:form.dataset.createdAt, revision:Number(form.dataset.revision),
+        status:form.querySelector('select').value
+      });
+      await searchLogs();
+      toast('검토 상태를 저장했어요.');
+    });
+  });
   $('policy-form').addEventListener('submit',e=>{
     e.preventDefault();
     run(async()=>{
       const next=await api('policy',{version:state.policy.version,keywords:$('keywords').value.split(',').map(s=>s.trim()).filter(Boolean),
         core_keywords:$('core-keywords').value.split(',').map(s=>s.trim()).filter(Boolean),caution:Number($('caution-threshold').value),block:Number($('block-threshold').value),
-        mode:document.querySelector('input[name="mode"]:checked').value});
+        mode:document.querySelector('input[name="mode"]:checked').value,require_pii_masking:$('require-pii-masking').checked});
       fillPolicy(next.policy);toast('보안 정책을 저장했어요. 다음 검사부터 적용됩니다.');
     });
   });

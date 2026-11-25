@@ -1,5 +1,6 @@
 """담당 B: 탐지 전략·점수·변환. 현재는 규칙 기반 데모 탐지기."""
 import re
+from dataclasses import replace
 from .domain import AnalysisResult, ConversionPreview, DetectedItem
 
 
@@ -17,15 +18,19 @@ class KeywordDetection:
 
 class PatternDetection:
     patterns = (
-        ("PHONE", r"(?<!\d)01[016789][- .]?\d{3,4}[- .]?\d{4}(?!\d)"),
-        ("EMAIL", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
-        ("IDENTIFIER", r"(?<!\d)\d{6}-[1-4]\d{6}(?!\d)"),
-        ("PERSON", r"(?<=이름: )[가-힣]{2,4}"),
+        ("PHONE", re.compile(r"(?<![\d+])(?:\+82[- .]?(?:\(0\)[- .]?)?1[016789]|01[016789])[- .]?\d{3,4}[- .]?\d{4}(?!\d)")),
+        ("EMAIL", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")),
+        ("IDENTIFIER", re.compile(r"(?<!\d)[0-9]{6}[- \t]?[1-8][0-9]{6}(?!\d)")),
+        ("PERSON", re.compile(r"(?:성명|이름|성함)[ \t]*[:：][ \t]*(?P<value>[가-힣]{2,10})(?![가-힣])")),
     )
 
     def detect(self, content, policy):
-        return [DetectedItem(kind, m.group(), *m.span())
-                for kind, pattern in self.patterns for m in re.finditer(pattern, content)]
+        items = []
+        for kind, pattern in self.patterns:
+            group = "value" if kind == "PERSON" else 0
+            items.extend(DetectedItem(kind, match.group(group), *match.span(group))
+                         for match in pattern.finditer(content))
+        return items
 
 
 class SecurityAnalyzer:
@@ -33,7 +38,6 @@ class SecurityAnalyzer:
         self.strategies = (KeywordDetection(), PatternDetection())
 
     def analyze(self, prompt, policy, conversation):
-        from dataclasses import replace
         items = []
         for history, content in [(True, s) for s in conversation.recent_before(prompt)] + [(False, prompt.content)]:
             for strategy in self.strategies:
@@ -43,7 +47,10 @@ class SecurityAnalyzer:
         score = min(0.95, 0.45 + 0.1 * (len(unique) - 1)) if unique else 0.0
         core = any(i.category == "CORE_SECRET" for i in items)
         level = "BLOCKED" if core or score >= policy.block else "CAUTION" if score >= policy.caution else "SAFE"
-        return AnalysisResult(level, round(score, 2), tuple(items), prompt.revision, policy.version, prompt.content)
+        result = AnalysisResult(level, round(score, 2), tuple(items), prompt.revision, policy.version, prompt.content)
+        if level == "SAFE" and policy.require_pii_masking and result.has_current_pii:
+            return replace(result, level="CAUTION")
+        return result
 
 
 class PromptSanitizer:

@@ -15,6 +15,7 @@ class SecurityPolicy:
     log_level: str = "MINIMAL"
     retention_days: int = 30
     auto_delete: bool = True
+    require_pii_masking: bool = False
 
     def validate(self):
         if not 0 < self.caution < self.block <= 1:
@@ -31,6 +32,8 @@ class SecurityPolicy:
             raise ValueError("지원하지 않는 기록 수준입니다.")
         if type(self.retention_days) is not int or not 1 <= self.retention_days <= 365:
             raise ValueError("보관 기간은 1~365일 정수입니다.")
+        if type(self.auto_delete) is not bool or type(self.require_pii_masking) is not bool:
+            raise ValueError("자동 삭제와 마스킹 설정은 켜기 또는 끄기로 지정하세요.")
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,11 @@ class AnalysisResult:
     policy_version: int
     content: str
     result_id: str = field(default_factory=lambda: uuid4().hex)
+
+    @property
+    def has_current_pii(self):
+        return any(not item.from_history and item.kind in {"PHONE", "EMAIL", "IDENTIFIER", "PERSON"}
+                   for item in self.items)
 
 
 @dataclass
